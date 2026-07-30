@@ -202,6 +202,29 @@ jobs:
           # Only the clang-19 binary itself is replaced above. ✅
           echo "✅ clang-19 replaced"
 
+          # ── Debug: verify lib/clang/19/lib/ runtime files are present ─────────
+          NDK_CLANG_LIB="/tmp/ndk-work/android-ndk-r28c-ollvm/toolchains/llvm/prebuilt/linux-arm64/lib/clang"
+          CLANG_VER=$(ls "$NDK_CLANG_LIB" 2>/dev/null | head -1)
+          echo "── lib/clang/$CLANG_VER/ subdirs ──"
+          ls "$NDK_CLANG_LIB/$CLANG_VER/" 2>/dev/null || echo "  (missing!)"
+
+          echo "── lib/clang/$CLANG_VER/lib/ contents ──"
+          ls "$NDK_CLANG_LIB/$CLANG_VER/lib/" 2>/dev/null || echo "  (lib/ missing!)"
+
+          echo "── libclang_rt.builtins.a for aarch64 ──"
+          find "$NDK_CLANG_LIB/$CLANG_VER/lib/" -name "libclang_rt.builtins.a" 2>/dev/null             | while read f; do echo "  FOUND: $f ($(du -sh $f | cut -f1))"; done             || true
+          FOUND=$(find "$NDK_CLANG_LIB/$CLANG_VER/lib/" -name "libclang_rt.builtins.a" 2>/dev/null | wc -l)
+          [ "$FOUND" -gt 0 ] && echo "✅ libclang_rt.builtins.a present ($FOUND ABIs)" || echo "❌ libclang_rt.builtins.a MISSING"
+
+          echo "── libunwind.a ──"
+          FOUND2=$(find "$NDK_CLANG_LIB/$CLANG_VER/lib/" -name "libunwind.a" 2>/dev/null | wc -l)
+          find "$NDK_CLANG_LIB/$CLANG_VER/lib/" -name "libunwind.a" 2>/dev/null             | while read f; do echo "  FOUND: $f"; done || true
+          [ "$FOUND2" -gt 0 ] && echo "✅ libunwind.a present ($FOUND2 ABIs)" || echo "❌ libunwind.a MISSING"
+
+          echo "── clang-19 binary ──"
+          file "/tmp/ndk-work/android-ndk-r28c-ollvm/toolchains/llvm/prebuilt/linux-arm64/bin/clang-19"
+          echo "──────────────────────────────────────────"
+
       - name: Stage 3 — Repackage NDK
         if: steps.check-release.outputs.asset_id == ''
         run: |
