@@ -228,9 +228,72 @@ jobs:
       - name: Stage 3 — Repackage NDK
         if: steps.check-release.outputs.asset_id == ''
         run: |
-          tar -cJf /tmp/android-ndk-r28c-ollvm.tar.xz \
-            -C /tmp/ndk-work android-ndk-r28c-ollvm
-          echo "Final NDK size: $(du -sh /tmp/android-ndk-r28c-ollvm.tar.xz)"
+          NDK_DIR="/tmp/ndk-work/android-ndk-r28c-ollvm"
+          NDK_CLANG_LIB="$NDK_DIR/toolchains/llvm/prebuilt/linux-arm64/lib/clang"
+          CLANG_VER=$(ls "$NDK_CLANG_LIB" 2>/dev/null | head -1)
+
+          echo "════════════════════════════════════════"
+          echo "  PRE-REPACKAGE VERIFICATION"
+          echo "════════════════════════════════════════"
+
+          echo ""
+          echo "── lib/clang/$CLANG_VER/ top-level dirs ──"
+          ls "$NDK_CLANG_LIB/$CLANG_VER/" 2>/dev/null && echo "✅ clang ver dir exists" || echo "❌ MISSING"
+
+          echo ""
+          echo "── lib/clang/$CLANG_VER/lib/ ABI dirs ──"
+          ls "$NDK_CLANG_LIB/$CLANG_VER/lib/" 2>/dev/null && echo "✅ lib/ exists" || echo "❌ lib/ MISSING — this is the bug"
+
+          echo ""
+          echo "── libclang_rt.builtins.a (all ABIs) ──"
+          COUNT=$(find "$NDK_CLANG_LIB/$CLANG_VER/lib/" -name "libclang_rt.builtins.a" 2>/dev/null | wc -l)
+          find "$NDK_CLANG_LIB/$CLANG_VER/lib/" -name "libclang_rt.builtins.a" 2>/dev/null             | while read f; do echo "  ✅ $f  ($(du -sh $f | cut -f1))"; done
+          [ "$COUNT" -gt 0 ] && echo "✅ libclang_rt.builtins.a: $COUNT ABI(s) present" || echo "❌ libclang_rt.builtins.a: MISSING"
+
+          echo ""
+          echo "── libunwind.a (all ABIs) ──"
+          COUNT2=$(find "$NDK_CLANG_LIB/$CLANG_VER/lib/" -name "libunwind.a" 2>/dev/null | wc -l)
+          find "$NDK_CLANG_LIB/$CLANG_VER/lib/" -name "libunwind.a" 2>/dev/null             | while read f; do echo "  ✅ $f"; done
+          [ "$COUNT2" -gt 0 ] && echo "✅ libunwind.a: $COUNT2 ABI(s) present" || echo "❌ libunwind.a: MISSING"
+
+          echo ""
+          echo "── libgcc.a (sysroot) ──"
+          COUNT3=$(find "$NDK_DIR/toolchains/llvm/prebuilt/linux-arm64/sysroot" -name "libgcc.a" 2>/dev/null | wc -l)
+          find "$NDK_DIR/toolchains/llvm/prebuilt/linux-arm64/sysroot" -name "libgcc.a" 2>/dev/null             | while read f; do echo "  ✅ $f"; done
+          [ "$COUNT3" -gt 0 ] && echo "✅ libgcc.a: $COUNT3 found" || echo "ℹ️  libgcc.a: not present (NDK r28 uses compiler-rt instead — expected)"
+
+          echo ""
+          echo "── clang-19 binary check ──"
+          CLANG_BIN="$NDK_DIR/toolchains/llvm/prebuilt/linux-arm64/bin/clang-19"
+          file "$CLANG_BIN" && du -sh "$CLANG_BIN" && echo "✅ clang-19 OK"
+
+          echo ""
+          echo "── Total file count + uncompressed size ──"
+          TOTAL_FILES=$(find "$NDK_DIR" | wc -l)
+          TOTAL_SIZE=$(du -sh "$NDK_DIR" | cut -f1)
+          echo "  Files: $TOTAL_FILES  |  Uncompressed: $TOTAL_SIZE"
+          echo "════════════════════════════════════════"
+          echo ""
+
+          echo "Compressing to tar.xz (this takes 3-5 min — xz is slow)…"
+          # Background progress reporter: print output file size every 15s
+          (
+            while [ ! -f /tmp/android-ndk-r28c-ollvm.tar.xz ]; do sleep 1; done
+            while kill -0 $TAR_PID 2>/dev/null; do
+              SIZE=$(du -sh /tmp/android-ndk-r28c-ollvm.tar.xz 2>/dev/null | cut -f1)
+              echo "  [repackage] written so far: $SIZE"
+              sleep 15
+            done
+          ) &
+          PROGRESS_PID=$!
+
+          tar -cJf /tmp/android-ndk-r28c-ollvm.tar.xz             -C /tmp/ndk-work android-ndk-r28c-ollvm &
+          TAR_PID=$!
+          wait $TAR_PID
+          kill $PROGRESS_PID 2>/dev/null || true
+
+          FINAL=$(du -sh /tmp/android-ndk-r28c-ollvm.tar.xz | cut -f1)
+          echo "✅ Repackage done — final size: $FINAL"
 
       - name: Stage 3 — Upload to release
         if: steps.check-release.outputs.asset_id == ''
