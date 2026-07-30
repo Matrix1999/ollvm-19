@@ -197,14 +197,12 @@ jobs:
           chmod 755 "$NDK_BIN/clang-19"
           echo "New size: $(du -sh $NDK_BIN/clang-19)"
 
-          # Replace resource headers
-          NEW_HEADERS=$(ls -d /tmp/clang-android/lib/clang/19* 2>/dev/null | head -1 || \
-                        ls -d /tmp/clang-android/lib/clang/*   2>/dev/null | head -1)
-          if [ -n "$NEW_HEADERS" ]; then
-            NDK_LIB="/tmp/ndk-work/android-ndk-r28c-ollvm/toolchains/llvm/prebuilt/linux-arm64/lib/clang"
-            ORIG=$(ls -d "$NDK_LIB"/19* 2>/dev/null | head -1 || ls -d "$NDK_LIB"/* 2>/dev/null | head -1)
-            [ -n "$ORIG" ] && rm -rf "$ORIG" && cp -r "$NEW_HEADERS" "$ORIG" && echo "✅ Headers replaced"
-          fi
+          # lib/clang/19/ is intentionally left untouched.
+          # The original NDK base already contains the full lib/clang/19/ tree:
+          #   include/  — compiler builtin headers (stddef.h, etc.)
+          #   lib/      — prebuilt runtime .a files (libclang_rt.builtins.a, libunwind.a, etc.)
+          # Replacing it with OLLVM cross-compiled version wipes lib/ and breaks linking.
+          # Only the clang-19 binary itself is replaced above. ✅
           echo "✅ clang-19 replaced"
 
       - name: Stage 3 — Repackage NDK
