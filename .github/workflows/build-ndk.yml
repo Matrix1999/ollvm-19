@@ -297,19 +297,29 @@ jobs:
 
       - name: Stage 3 — Upload to release
         if: steps.check-release.outputs.asset_id == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          AUTH="-H \"Authorization: token $GH_TOKEN\""
+
           # Delete old release/tag if exists
           OLD_ID=$(curl -s \
+            -H "Authorization: token $GH_TOKEN" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/android-ndk-ollvm" \
             | jq -r '.id // empty')
           if [ -n "$OLD_ID" ]; then
+            echo "Deleting old release $OLD_ID..."
             curl -s -X DELETE \
+              -H "Authorization: token $GH_TOKEN" \
               "https://api.github.com/repos/${{ github.repository }}/releases/$OLD_ID"
             git push origin :refs/tags/android-ndk-ollvm 2>/dev/null || true
             sleep 3
           fi
 
+          echo "Creating release tag android-ndk-ollvm..."
           REL_ID=$(curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/${{ github.repository }}/releases" \
             -d '{
               "tag_name": "android-ndk-ollvm",
@@ -319,9 +329,17 @@ jobs:
             }' | jq -r '.id')
           echo "Release ID: $REL_ID"
 
-          curl -X POST \
+          if [ -z "$REL_ID" ] || [ "$REL_ID" = "null" ]; then
+            echo "❌ Failed to create release — check GITHUB_TOKEN permissions"
+            exit 1
+          fi
+
+          echo "Uploading 793M NDK asset..."
+          UPLOAD_RESULT=$(curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
             -H "Content-Type: application/x-xz" \
             "https://uploads.github.com/repos/${{ github.repository }}/releases/$REL_ID/assets?name=android-ndk-r28c-ollvm.tar.xz" \
-            --data-binary @/tmp/android-ndk-r28c-ollvm.tar.xz \
-            | jq '{id, name, size}'
-          echo "✅ NDK uploaded to release android-ndk-ollvm"
+            --data-binary @/tmp/android-ndk-r28c-ollvm.tar.xz)
+          echo "$UPLOAD_RESULT" | jq '{id, name, size, state}'
+          ASSET_ID=$(echo "$UPLOAD_RESULT" | jq -r '.id // empty')
+          [ -n "$ASSET_ID" ] && echo "✅ NDK uploaded to release android-ndk-ollvm (asset $ASSET_ID)" || echo "❌ Upload failed"
