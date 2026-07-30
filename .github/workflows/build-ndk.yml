@@ -8,7 +8,7 @@ name: Build OLLVM NDK (arm64 + arm32)
 #   Stage 2 cache: cross-clang    (arm64-android clang-19 install, ~70-90 min)
 #   Skip check:    if release asset already exists the whole job exits in <30 s
 #
-# Output release asset: android-ndk-r28c-ollvm.tar.xz  (tag: android-ndk-arm32)
+# Output release asset: android-ndk-r28c-ollvm.tar.xz  (tag: android-ndk-ollvm)
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -28,7 +28,7 @@ jobs:
         run: |
           ASSET_ID=$(curl -s \
             -H "Authorization: Bearer ${{ github.token }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/android-ndk-arm32" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/android-ndk-ollvm" \
             | jq -r '.assets[]? | select(.name=="android-ndk-r28c-ollvm.tar.xz") | .id' \
             | head -1)
           echo "asset_id=${ASSET_ID}" >> $GITHUB_OUTPUT
@@ -220,13 +220,13 @@ jobs:
           # Delete old release/tag if exists
           OLD_ID=$(curl -s \
             -H "Authorization: Bearer ${{ github.token }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/android-ndk-arm32" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/android-ndk-ollvm" \
             | jq -r '.id // empty')
           if [ -n "$OLD_ID" ]; then
             curl -s -X DELETE \
               -H "Authorization: Bearer ${{ github.token }}" \
               "https://api.github.com/repos/${{ github.repository }}/releases/$OLD_ID"
-            git push origin :refs/tags/android-ndk-arm32 2>/dev/null || true
+            git push origin :refs/tags/android-ndk-ollvm 2>/dev/null || true
             sleep 3
           fi
 
@@ -234,7 +234,7 @@ jobs:
             -H "Authorization: Bearer ${{ github.token }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases" \
             -d '{
-              "tag_name": "android-ndk-arm32",
+              "tag_name": "android-ndk-ollvm",
               "name": "android-ndk-r28c-ollvm (arm64 + arm32)",
               "body": "OLLVM NDK r28c with LLVM_TARGETS_TO_BUILD=AArch64;ARM.\nBoth arm64-v8a and armeabi-v7a on-device compilation with all OLLVM passes.\nHost: aarch64-linux-android21.",
               "prerelease": false
@@ -247,4 +247,4 @@ jobs:
             "https://uploads.github.com/repos/${{ github.repository }}/releases/$REL_ID/assets?name=android-ndk-r28c-ollvm.tar.xz" \
             --data-binary @/tmp/android-ndk-r28c-ollvm.tar.xz \
             | jq '{id, name, size}'
-          echo "✅ NDK uploaded to release android-ndk-arm32"
+          echo "✅ NDK uploaded to release android-ndk-ollvm"
