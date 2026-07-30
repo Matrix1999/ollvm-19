@@ -1,0 +1,227 @@
+name: Build OLLVM NDK (arm64 + arm32)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Builds android-ndk-r28c-ollvm with BOTH AArch64 AND ARM (32-bit) targets.
+#
+# Strategy:
+#   Stage 1 — native tools: build llvm-tblgen + clang-tblgen on x86_64 host.
+#              Required for cross-compilation; LLVM cannot bootstrap without them.
+#   Stage 2 — cross-compile: build clang-19 targeting aarch64-linux-android
+#              (runs on ARM64 Android devices) with LLVM_TARGETS=AArch64;ARM.
+#   Stage 3 — assemble NDK: download FullError11's base NDK, swap in the new
+#              clang-19 binary (which now has ARM32 code-gen), repackage.
+#
+# Output release asset: android-ndk-r28c-ollvm.tar.xz  (tag: android-ndk-arm32)
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: write
+
+    steps:
+      # ── Dependencies ────────────────────────────────────────────────────────
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cmake python3 git lld curl xz-utils
+          echo "Cores: $(nproc)"
+          echo "RAM: $(free -h | awk '/^Mem:/{print $2}')"
+          df -h /
+
+      # ── OLLVM source ─────────────────────────────────────────────────────────
+      - name: Checkout OLLVM source
+        uses: actions/checkout@v4
+        with:
+          path: ollvm-src
+
+      # ── Android NDK (for cross-compilation toolchain + sysroot) ─────────────
+      - name: Set up Android SDK / NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK r28c
+        run: |
+          yes | sdkmanager "ndk;28.0.13004108" 2>/dev/null || \
+          yes | sdkmanager "ndk;27.2.12479018" 2>/dev/null || \
+          yes | sdkmanager "ndk;25.2.9519653"  2>/dev/null || true
+          # Find whichever NDK was installed
+          NDK_PATH=$(ls -d $ANDROID_SDK_ROOT/ndk/28* 2>/dev/null | head -1 || \
+                     ls -d $ANDROID_SDK_ROOT/ndk/27* 2>/dev/null | head -1 || \
+                     ls -d $ANDROID_SDK_ROOT/ndk/25* 2>/dev/null | head -1)
+          echo "NDK_PATH=$NDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_TC=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64" >> $GITHUB_ENV
+          echo "Using NDK: $NDK_PATH"
+
+      # ── Stage 1: Native tools (x86_64) ──────────────────────────────────────
+      - name: Cache native tools
+        id: cache-native
+        uses: actions/cache@v4
+        with:
+          path: /tmp/native-tools
+          key: native-tools-${{ runner.os }}-${{ hashFiles('ollvm-src/llvm/CMakeLists.txt') }}
+
+      - name: Stage 1 — Build native llvm-tblgen + clang-tblgen
+        if: steps.cache-native.outputs.cache-hit != 'true'
+        run: |
+          cmake -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_PROJECTS="clang" \
+            -DLLVM_TARGETS_TO_BUILD="host" \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_INCLUDE_DOCS=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF \
+            -DCLANG_INCLUDE_TESTS=OFF \
+            -DCMAKE_INSTALL_PREFIX=/tmp/native-tools \
+            -B /tmp/native-build \
+            ollvm-src/llvm
+          ninja -C /tmp/native-build -j$(nproc) llvm-tblgen clang-tblgen
+          mkdir -p /tmp/native-tools/bin
+          cp /tmp/native-build/bin/llvm-tblgen  /tmp/native-tools/bin/
+          cp /tmp/native-build/bin/clang-tablgen /tmp/native-tools/bin/ 2>/dev/null || \
+          cp /tmp/native-build/bin/clang-tblgen  /tmp/native-tools/bin/ 2>/dev/null || true
+          echo "✅ Native tools built"
+          ls /tmp/native-tools/bin/
+
+      # ── Stage 2: Cross-compile clang for arm64 Android ──────────────────────
+      - name: Stage 2 — Cross-compile clang for aarch64-linux-android
+        run: |
+          TC="$ANDROID_TC"
+          SYSROOT="$TC/sysroot"
+
+          cmake -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK_PATH/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-21 \
+            -DANDROID_STL=c++_static \
+            -DLLVM_ENABLE_PROJECTS="clang" \
+            -DLLVM_TARGETS_TO_BUILD="AArch64;ARM" \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_INCLUDE_DOCS=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF \
+            -DCLANG_INCLUDE_TESTS=OFF \
+            -DCLANG_INCLUDE_DOCS=OFF \
+            -DLLVM_TABLEGEN=/tmp/native-tools/bin/llvm-tblgen \
+            -DCLANG_TABLEGEN=/tmp/native-tools/bin/clang-tblgen \
+            -DLLVM_HOST_TRIPLE=aarch64-linux-android21 \
+            -DLLVM_DEFAULT_TARGET_TRIPLE=aarch64-linux-android21 \
+            -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld -static-libstdc++" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" \
+            -DCMAKE_INSTALL_PREFIX=/tmp/clang-android \
+            -B /tmp/cross-build \
+            ollvm-src/llvm
+
+          ninja -C /tmp/cross-build -j$(nproc) clang
+          ninja -C /tmp/cross-build install-clang install-clang-resource-headers
+          echo "✅ Cross-compiled clang installed"
+          file /tmp/clang-android/bin/clang-19 || file /tmp/clang-android/bin/clang-*
+          du -sh /tmp/clang-android/bin/clang-19 2>/dev/null || \
+          du -sh /tmp/clang-android/bin/clang-*
+
+      # ── Stage 3: Assemble NDK ────────────────────────────────────────────────
+      - name: Download FullError11 NDK base
+        run: |
+          echo "Downloading FullError11 NDK base (311 MB)…"
+          curl -L "https://github.com/FullError11/android-ndk-r28c-ollvm/releases/download/v1.0.0/android-ndk-r28c-ollvm.tar.xz" \
+            -o /tmp/base-ndk.tar.xz
+          echo "Downloaded: $(du -sh /tmp/base-ndk.tar.xz)"
+          mkdir -p /tmp/ndk-work
+          tar -xJf /tmp/base-ndk.tar.xz -C /tmp/ndk-work
+          echo "Extracted NDK:"
+          ls /tmp/ndk-work/
+
+      - name: Replace clang-19 with ARM32-capable build
+        run: |
+          NDK_BIN="/tmp/ndk-work/android-ndk-r28c-ollvm/toolchains/llvm/prebuilt/linux-arm64/bin"
+
+          # Find new clang-19 binary
+          NEW_CLANG=$(ls /tmp/clang-android/bin/clang-19 2>/dev/null || \
+                      ls /tmp/clang-android/bin/clang-2* 2>/dev/null | sort | tail -1)
+          echo "New clang binary: $NEW_CLANG"
+          file "$NEW_CLANG"
+
+          # Back up original
+          cp "$NDK_BIN/clang-19" "$NDK_BIN/clang-19.bak"
+
+          # Replace
+          cp "$NEW_CLANG" "$NDK_BIN/clang-19"
+          chmod 755 "$NDK_BIN/clang-19"
+          echo "✅ Replaced clang-19"
+          echo "Old size: $(du -sh $NDK_BIN/clang-19.bak)"
+          echo "New size: $(du -sh $NDK_BIN/clang-19)"
+
+          # Copy resource headers (needed for clang to find builtins etc.)
+          NEW_HEADERS=$(ls -d /tmp/clang-android/lib/clang/19* 2>/dev/null | head -1 || \
+                        ls -d /tmp/clang-android/lib/clang/*   2>/dev/null | head -1)
+          if [ -n "$NEW_HEADERS" ]; then
+            NDK_LIB="/tmp/ndk-work/android-ndk-r28c-ollvm/toolchains/llvm/prebuilt/linux-arm64/lib/clang"
+            # Replace resource dir
+            ORIG=$(ls -d "$NDK_LIB"/19* 2>/dev/null | head -1 || ls -d "$NDK_LIB"/* 2>/dev/null | head -1)
+            if [ -n "$ORIG" ]; then
+              rm -rf "$ORIG"
+              cp -r "$NEW_HEADERS" "$ORIG"
+              echo "✅ Replaced clang resource headers"
+            fi
+          fi
+
+          # Remove backup to save space
+          rm -f "$NDK_BIN/clang-19.bak"
+
+      - name: Repackage NDK
+        run: |
+          echo "Packaging new NDK…"
+          tar -cJf /tmp/android-ndk-r28c-ollvm.tar.xz \
+            -C /tmp/ndk-work android-ndk-r28c-ollvm
+          echo "Final size: $(du -sh /tmp/android-ndk-r28c-ollvm.tar.xz)"
+
+      # ── Upload release ───────────────────────────────────────────────────────
+      - name: Upload to release
+        run: |
+          # Delete old release if exists
+          OLD_ID=$(curl -s \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/android-ndk-arm32" \
+            | jq -r '.id // empty')
+          if [ -n "$OLD_ID" ]; then
+            curl -s -X DELETE \
+              -H "Authorization: Bearer ${{ github.token }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/$OLD_ID"
+            git push origin :refs/tags/android-ndk-arm32 2>/dev/null || true
+            sleep 3
+          fi
+
+          # Create release
+          REL_ID=$(curl -s -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" \
+            -d '{
+              "tag_name": "android-ndk-arm32",
+              "name": "android-ndk-r28c-ollvm (arm64 + arm32)",
+              "body": "OLLVM NDK r28c rebuilt with LLVM_TARGETS_TO_BUILD=AArch64;ARM.\nBoth arm64-v8a and armeabi-v7a on-device compilation with all OLLVM obfuscation passes.\nHost: aarch64-linux-android (ARM64 Android devices).",
+              "prerelease": false
+            }' | jq -r '.id')
+          echo "Release ID: $REL_ID"
+
+          # Upload asset
+          curl -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Content-Type: application/x-xz" \
+            "https://uploads.github.com/repos/${{ github.repository }}/releases/$REL_ID/assets?name=android-ndk-r28c-ollvm.tar.xz" \
+            --data-binary @/tmp/android-ndk-r28c-ollvm.tar.xz \
+            | jq '{id, name, size}'
+          echo "✅ NDK uploaded to release android-ndk-arm32"
