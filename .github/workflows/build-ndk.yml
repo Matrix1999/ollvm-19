@@ -202,6 +202,31 @@ jobs:
           # Only the clang-19 binary itself is replaced above. ✅
           echo "✅ clang-19 replaced"
 
+          # ── Copy libclang_rt.builtins.a from standard NDK r28c (linux-x86_64) ──
+          # The FullError11 base NDK ships without libclang_rt.builtins.a.
+          # The runner's standard NDK r28c has them under linux-x86_64 — same target
+          # .a files, just different host prebuilt dir. Copy them across.
+          STD_NDK=$(find /usr/local/lib/android/sdk/ndk -maxdepth 1 -name "28.*" | sort -V | tail -1)
+          echo "Standard NDK path: $STD_NDK"
+          SRC_LIB="$STD_NDK/toolchains/llvm/prebuilt/linux-x86_64/lib/clang"
+          SRC_VER=$(ls "$SRC_LIB" 2>/dev/null | head -1)
+          DST_LIB="/tmp/ndk-work/android-ndk-r28c-ollvm/toolchains/llvm/prebuilt/linux-arm64/lib/clang"
+          DST_VER=$(ls "$DST_LIB" 2>/dev/null | head -1)
+          echo "Copying libclang_rt.builtins.a: $SRC_LIB/$SRC_VER/lib/linux/ → $DST_LIB/$DST_VER/lib/linux/"
+          for ABI in aarch64 arm i386 x86_64 riscv64; do
+            SRC_FILE="$SRC_LIB/$SRC_VER/lib/linux/$ABI/libclang_rt.builtins.a"
+            DST_DIR="$DST_LIB/$DST_VER/lib/linux/$ABI"
+            if [ -f "$SRC_FILE" ]; then
+              mkdir -p "$DST_DIR"
+              cp "$SRC_FILE" "$DST_DIR/libclang_rt.builtins.a"
+              echo "  ✅ Copied $ABI/libclang_rt.builtins.a ($(du -sh $SRC_FILE | cut -f1))"
+            else
+              echo "  ⚠️  $ABI not found in standard NDK at $SRC_FILE"
+            fi
+          done
+          echo "✅ libclang_rt.builtins.a copy done"
+          # ─────────────────────────────────────────────────────────────────────────
+
           # ── Debug: verify lib/clang/19/lib/ runtime files are present ─────────
           NDK_CLANG_LIB="/tmp/ndk-work/android-ndk-r28c-ollvm/toolchains/llvm/prebuilt/linux-arm64/lib/clang"
           CLANG_VER=$(ls "$NDK_CLANG_LIB" 2>/dev/null | head -1)
