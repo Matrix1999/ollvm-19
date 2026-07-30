@@ -27,7 +27,6 @@ jobs:
         id: check-release
         run: |
           ASSET_ID=$(curl -s \
-            -H "Authorization: Bearer ${{ github.token }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/android-ndk-ollvm" \
             | jq -r '.assets[]? | select(.name=="android-ndk-r28c-ollvm.tar.xz") | .id' \
             | head -1)
@@ -169,14 +168,12 @@ jobs:
       # STAGE 3 — Assemble NDK: swap clang-19, repackage, upload
       #           No cache here — fast (~5 min), always runs fresh.
       # ────────────────────────────────────────────────────────────────────────
-      - name: Stage 3 — Download NDK base (self-hosted mirror)
+      - name: Stage 3 — Download NDK base
         if: steps.check-release.outputs.asset_id == ''
         run: |
           echo "Downloading NDK base mirror (311 MB)…"
           curl -L \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            -H "Accept: application/octet-stream" \
-            "https://github.com/${{ github.repository }}/releases/download/ndk-base/android-ndk-r28c-ollvm-base.tar.xz" \
+            "https://github.com/FullError11/android-ndk-r28c-ollvm/releases/download/v1.0.0/android-ndk-r28c-ollvm.tar.xz" \
             -o /tmp/base-ndk.tar.xz
           echo "Downloaded: $(du -sh /tmp/base-ndk.tar.xz)"
           mkdir -p /tmp/ndk-work
@@ -217,19 +214,16 @@ jobs:
         run: |
           # Delete old release/tag if exists
           OLD_ID=$(curl -s \
-            -H "Authorization: Bearer ${{ github.token }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/android-ndk-ollvm" \
             | jq -r '.id // empty')
           if [ -n "$OLD_ID" ]; then
             curl -s -X DELETE \
-              -H "Authorization: Bearer ${{ github.token }}" \
               "https://api.github.com/repos/${{ github.repository }}/releases/$OLD_ID"
             git push origin :refs/tags/android-ndk-ollvm 2>/dev/null || true
             sleep 3
           fi
 
           REL_ID=$(curl -s -X POST \
-            -H "Authorization: Bearer ${{ github.token }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases" \
             -d '{
               "tag_name": "android-ndk-ollvm",
@@ -240,7 +234,6 @@ jobs:
           echo "Release ID: $REL_ID"
 
           curl -X POST \
-            -H "Authorization: Bearer ${{ github.token }}" \
             -H "Content-Type: application/x-xz" \
             "https://uploads.github.com/repos/${{ github.repository }}/releases/$REL_ID/assets?name=android-ndk-r28c-ollvm.tar.xz" \
             --data-binary @/tmp/android-ndk-r28c-ollvm.tar.xz \
