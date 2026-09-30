@@ -8,8 +8,7 @@ name: Build OLLVM NDK (arm64 + arm32)
 #   Stage 2 cache: cross-clang    (arm64-android clang-19 install, ~70-90 min)
 #   Skip check:    if release asset already exists the whole job exits in <30 s
 #
-# Output release asset: android-ndk-r28c-ollvm-kagura.tar.xz
-# (tag: android-ndk-ollvm-kagura); extracted folder stays android-ndk-r28c-ollvm.
+# Output release asset: android-ndk-r28c-ollvm.tar.xz  (tag: android-ndk-ollvm)
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -28,8 +27,8 @@ jobs:
         id: check-release
         run: |
           ASSET_ID=$(curl -s \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/android-ndk-ollvm-kagura" \
-            | jq -r '.assets[]? | select(.name=="android-ndk-r28c-ollvm-kagura.tar.xz") | .id' \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/android-ndk-ollvm" \
+            | jq -r '.assets[]? | select(.name=="android-ndk-r28c-ollvm.tar.xz") | .id' \
             | head -1)
           echo "asset_id=${ASSET_ID}" >> $GITHUB_OUTPUT
           if [ -n "$ASSET_ID" ]; then
@@ -59,9 +58,6 @@ jobs:
       - name: Set up Android SDK / NDK
         if: steps.check-release.outputs.asset_id == ''
         uses: android-actions/setup-android@v3
-        with:
-          # setup-android@v3 defaults to the retired "tools" SDK package.
-          packages: platform-tools
 
       - name: Install NDK r28c
         if: steps.check-release.outputs.asset_id == ''
@@ -87,7 +83,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/native-tools
-          key: native-tools-${{ runner.os }}-${{ hashFiles('ollvm-src/llvm/CMakeLists.txt', 'ollvm-src/llvm/lib/Passes/**', 'ollvm-src/llvm/include/kagura/**') }}
+          key: native-tools-${{ runner.os }}-${{ hashFiles('ollvm-src/llvm/CMakeLists.txt') }}
 
       - name: Stage 1 — Build native llvm-tblgen + clang-tblgen
         if: >
@@ -129,7 +125,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/clang-android
-          key: cross-clang-android-AArch64+ARM-kagura-${{ hashFiles('ollvm-src/llvm/CMakeLists.txt', 'ollvm-src/llvm/lib/Passes/**', 'ollvm-src/llvm/include/kagura/**', 'ollvm-src/clang/lib/CodeGen/BackendUtil.cpp') }}
+          key: cross-clang-android-AArch64+ARM-${{ hashFiles('ollvm-src/llvm/CMakeLists.txt', 'ollvm-src/clang/lib/CodeGen/BackendUtil.cpp') }}
 
       - name: Stage 2 — Cross-compile clang for aarch64-linux-android
         if: >
@@ -280,19 +276,23 @@ jobs:
           echo ""
 
           echo "Compressing to tar.xz (this takes 3-5 min — xz is slow)…"
-          NDK_ARCHIVE="/tmp/android-ndk-r28c-ollvm-kagura.tar.xz"
-          tar -cJf "$NDK_ARCHIVE" -C /tmp/ndk-work android-ndk-r28c-ollvm &
-          TAR_PID=$!
-          while kill -0 "$TAR_PID" 2>/dev/null; do
-            if [ -f "$NDK_ARCHIVE" ]; then
-              SIZE=$(du -sh "$NDK_ARCHIVE" 2>/dev/null | cut -f1)
+          # Background progress reporter: print output file size every 15s
+          (
+            while [ ! -f /tmp/android-ndk-r28c-ollvm.tar.xz ]; do sleep 1; done
+            while kill -0 $TAR_PID 2>/dev/null; do
+              SIZE=$(du -sh /tmp/android-ndk-r28c-ollvm.tar.xz 2>/dev/null | cut -f1)
               echo "  [repackage] written so far: $SIZE"
-            fi
-            sleep 15
-          done
+              sleep 15
+            done
+          ) &
+          PROGRESS_PID=$!
+
+          tar -cJf /tmp/android-ndk-r28c-ollvm.tar.xz             -C /tmp/ndk-work android-ndk-r28c-ollvm &
+          TAR_PID=$!
           wait $TAR_PID
-          test -s "$NDK_ARCHIVE"
-          FINAL=$(du -sh "$NDK_ARCHIVE" | cut -f1)
+          kill $PROGRESS_PID 2>/dev/null || true
+
+          FINAL=$(du -sh /tmp/android-ndk-r28c-ollvm.tar.xz | cut -f1)
           echo "✅ Repackage done — final size: $FINAL"
 
       - name: Stage 3 — Upload to release
@@ -302,16 +302,28 @@ jobs:
         run: |
           AUTH="-H \"Authorization: token $GH_TOKEN\""
 
-          # Deliberately create a separate release; never mutate the existing
-          # android-ndk-ollvm artifact.
-          echo "Creating release tag android-ndk-ollvm-kagura..."
+          # Delete old release/tag if exists
+          OLD_ID=$(curl -s \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/android-ndk-ollvm" \
+            | jq -r '.id // empty')
+          if [ -n "$OLD_ID" ]; then
+            echo "Deleting old release $OLD_ID..."
+            curl -s -X DELETE \
+              -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/$OLD_ID"
+            git push origin :refs/tags/android-ndk-ollvm 2>/dev/null || true
+            sleep 3
+          fi
+
+          echo "Creating release tag android-ndk-ollvm..."
           REL_ID=$(curl -s -X POST \
             -H "Authorization: token $GH_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/${{ github.repository }}/releases" \
             -d '{
-              "tag_name": "android-ndk-ollvm-kagura",
-              "name": "android-ndk-r28c-ollvm-kagura (arm64 + arm32)",
+              "tag_name": "android-ndk-ollvm",
+              "name": "android-ndk-r28c-ollvm (arm64 + arm32)",
               "body": "OLLVM NDK r28c with LLVM_TARGETS_TO_BUILD=AArch64;ARM.\nBoth arm64-v8a and armeabi-v7a on-device compilation with all OLLVM passes.\nHost: aarch64-linux-android21.",
               "prerelease": false
             }' | jq -r '.id')
@@ -326,8 +338,8 @@ jobs:
           UPLOAD_RESULT=$(curl -s -X POST \
             -H "Authorization: token $GH_TOKEN" \
             -H "Content-Type: application/x-xz" \
-            "https://uploads.github.com/repos/${{ github.repository }}/releases/$REL_ID/assets?name=android-ndk-r28c-ollvm-kagura.tar.xz" \
-            --data-binary @/tmp/android-ndk-r28c-ollvm-kagura.tar.xz)
+            "https://uploads.github.com/repos/${{ github.repository }}/releases/$REL_ID/assets?name=android-ndk-r28c-ollvm.tar.xz" \
+            --data-binary @/tmp/android-ndk-r28c-ollvm.tar.xz)
           echo "$UPLOAD_RESULT" | jq '{id, name, size, state}'
           ASSET_ID=$(echo "$UPLOAD_RESULT" | jq -r '.id // empty')
-          [ -n "$ASSET_ID" ] && echo "✅ NDK uploaded to release android-ndk-ollvm-kagura (asset $ASSET_ID)" || echo "❌ Upload failed"
+          [ -n "$ASSET_ID" ] && echo "✅ NDK uploaded to release android-ndk-ollvm (asset $ASSET_ID)" || echo "❌ Upload failed"
