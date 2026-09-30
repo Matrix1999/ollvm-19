@@ -59,6 +59,9 @@ jobs:
       - name: Set up Android SDK / NDK
         if: steps.check-release.outputs.asset_id == ''
         uses: android-actions/setup-android@v3
+        with:
+          # setup-android@v3 defaults to the retired "tools" SDK package.
+          packages: platform-tools
 
       - name: Install NDK r28c
         if: steps.check-release.outputs.asset_id == ''
