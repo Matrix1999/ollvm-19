@@ -1,5 +1,6 @@
 #include "kagura/Options.h"
 #include "kagura/Utils.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
 #if __has_include("llvm/TargetParser/Triple.h")
@@ -11,6 +12,7 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/Path.h"
@@ -21,6 +23,28 @@
 using namespace llvm;
 
 namespace kagura {
+
+void markObfuscated(Function &F, StringRef PassName) {
+  if (PassName.empty())
+    return;
+
+  LLVMContext &Ctx = F.getContext();
+  SmallVector<Metadata *, 8> Passes;
+  if (MDNode *Existing = F.getMetadata("kagura_obfuscated")) {
+    for (const MDOperand &Operand : Existing->operands()) {
+      Metadata *Entry = Operand.get();
+      if (auto *Name = dyn_cast_or_null<MDString>(Entry)) {
+        if (Name->getString() == PassName)
+          return;
+      }
+      if (Entry)
+        Passes.push_back(Entry);
+    }
+  }
+
+  Passes.push_back(MDString::get(Ctx, PassName));
+  F.setMetadata("kagura_obfuscated", MDNode::get(Ctx, Passes));
+}
 
 // ---- Annotation helpers ----
 
