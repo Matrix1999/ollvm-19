@@ -1,0 +1,12 @@
+#ifndef KAGURA_FN_PASS
+#define KAGURA_FN_PASS(Flag, Cli, Desc, Ctor)
+#endif
+#ifndef KAGURA_TUNING
+#define KAGURA_TUNING(Flag, Cli, Type, Default, Desc)
+#endif
+KAGURA_FN_PASS(MVO, "kagura-mvo", "In-memory value XOR obfuscation", MemoryValueObfuscationPass())
+KAGURA_FN_PASS(PE,  "kagura-pe",  "Pointer encryption", PointerEncryptionPass())
+KAGURA_FN_PASS(VM,  "kagura-vm",  "Native VM virtualization", VMObfuscationPass())
+KAGURA_TUNING(Seed, "kagura-seed", uint64_t, 0, "PRNG seed")
+#undef KAGURA_FN_PASS
+#undef KAGURA_TUNING

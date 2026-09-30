@@ -19,6 +19,11 @@ add_llvm_component_library(LLVMPasses
   Obfuscation/IndirectBranch.cpp
   Obfuscation/IndirectCall.cpp
   Obfuscation/IndirectGlobalVariable.cpp
+  Kagura/Options.cpp
+  Kagura/Utils.cpp
+  Kagura/Data/MemoryValueObfuscation.cpp
+  Kagura/Data/PointerEncryption.cpp
+  Kagura/VM/VMObfuscation.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm

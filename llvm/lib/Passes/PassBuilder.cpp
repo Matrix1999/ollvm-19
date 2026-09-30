@@ -327,6 +327,9 @@
 #include "Obfuscation/IndirectBranch.h" // 间接跳转
 #include "Obfuscation/IndirectCall.h" // 间接调用
 #include "Obfuscation/Utils.h" // 为了控制函数名混淆开关 (bool obf_function_name_cmd;)
+#include "kagura/Options.h"
+#include "kagura/Passes/Data.h"
+#include "kagura/Passes/VM.h"
 
 using namespace llvm;
 
@@ -445,6 +448,9 @@ static cl::opt<bool> s_obf_igv("igv", cl::init(false), cl::desc("Indirect Global
 static cl::opt<bool> s_obf_icall("icall", cl::init(false), cl::desc("Indirect Call"));
 static cl::opt<bool> s_obf_fn_name_cmd("fncmd", cl::init(false), cl::desc("use function name control obfuscation(_ + command + _ | example: function_fla_bcf_)"));
 
+// Kagura passes are compiled into LLVMPasses (rather than loaded with
+// -fpass-plugin) so the Android clang binary contains the implementation.
+
 
 
 PassBuilder::PassBuilder(TargetMachine *TM, PipelineTuningOptions PTO,
@@ -518,6 +524,15 @@ PassBuilder::PassBuilder(TargetMachine *TM, PipelineTuningOptions PTO,
         MPM.addPass(IndirectBranchPass(s_obf_ibr)); // 间接指令 理论上间接指令应该放在最后
         MPM.addPass(IndirectGlobalVariablePass(s_obf_igv)); // 间接全局变量
         MPM.addPass(RewriteSymbolPass()); // 根据yaml信息 重命名特定symbols
+         llvm::FunctionPassManager KaguraFPM;
+         if (kagura::opt::MVO)
+           KaguraFPM.addPass(kagura::MemoryValueObfuscationPass());
+         if (kagura::opt::PE)
+           KaguraFPM.addPass(kagura::PointerEncryptionPass());
+         if (kagura::opt::VM)
+           KaguraFPM.addPass(kagura::VMObfuscationPass());
+         if (kagura::opt::MVO || kagura::opt::PE || kagura::opt::VM)
+           MPM.addPass(createModuleToFunctionPassAdaptor(std::move(KaguraFPM)));
       }
   );
 
